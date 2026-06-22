@@ -1,8 +1,6 @@
 import process from "node:process";
-import {
-  parseFormBody,
-  verifyCheckMacValue,
-} from "../utils/ecpayHelper.js";
+import { parseFormBody, verifyCheckMacValue } from "../utils/ecpayHelper.js";
+import { convertJpyToTwd } from "../utils/exchangeRate.js";
 
 const getRequiredEnv = (name) => {
   const value = process.env[name];
@@ -18,10 +16,7 @@ const getHexApiUrl = (path) => {
   const apiBase = getRequiredEnv("VITE_API_BASE").replace(/\/$/, "");
   const apiPath = getRequiredEnv("VITE_API_PATH");
 
-  return (
-    `${apiBase}/api/${encodeURIComponent(apiPath)}` +
-    `/${path}`
-  );
+  return `${apiBase}/api/${encodeURIComponent(apiPath)}` + `/${path}`;
 };
 
 const getOrder = async (orderId) => {
@@ -128,27 +123,45 @@ export default async function handler(request, response) {
       return sendCallbackResponse(response, "1|OK");
     }
 
-    const orderAmount = Number(order.total);
+    //驗證建立付款當下鎖定的匯率
+    const orderJpyAmount = Number(order.total);
+    const signedJpyAmount = Number(parameters.CustomField2);
+    const signedRate = Number(parameters.CustomField3);
+    const signedTwdAmount = Number(parameters.CustomField4);
     const ecpayAmount = Number(parameters.TradeAmt);
 
     if (
-      !Number.isInteger(orderAmount) ||
+      !Number.isInteger(orderJpyAmount) ||
+      orderJpyAmount <= 0 ||
+      !Number.isInteger(signedJpyAmount) ||
+      signedJpyAmount <= 0 ||
+      orderJpyAmount !== signedJpyAmount ||
+      !Number.isFinite(signedRate) ||
+      signedRate <= 0 ||
+      !Number.isInteger(signedTwdAmount) ||
+      signedTwdAmount <= 0 ||
       !Number.isInteger(ecpayAmount) ||
-      orderAmount <= 0 ||
-      orderAmount !== ecpayAmount
+      ecpayAmount <= 0
     ) {
-      console.error("綠界 callback 訂單金額不符");
+      console.error("綠界 callback 金額資料格式錯誤");
+
+      return sendCallbackResponse(response, "0|Amount Error");
+    }
+
+    const calculatedTwdAmount = convertJpyToTwd(signedJpyAmount, signedRate);
+
+    if (
+      calculatedTwdAmount !== signedTwdAmount ||
+      signedTwdAmount !== ecpayAmount
+    ) {
+      console.error("綠界 callback 換算金額不一致");
 
       return sendCallbackResponse(response, "0|Amount Error");
     }
 
     await markOrderAsPaid(orderId);
 
-    console.log(
-      "綠界測試付款成功：",
-      parameters.MerchantTradeNo,
-      orderId,
-    );
+    console.log("綠界測試付款成功：", parameters.MerchantTradeNo, orderId);
 
     return sendCallbackResponse(response, "1|OK");
   } catch (error) {

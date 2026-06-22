@@ -6,6 +6,8 @@ import {
   parseFormBody,
 } from "../utils/ecpayHelper.js";
 
+import { convertJpyToTwd, fetchJpyToTwdRate } from "../utils/exchangeRate.js";
+
 const getRequiredEnv = (name) => {
   const value = process.env[name];
 
@@ -111,42 +113,46 @@ export default async function handler(request, response) {
       });
     }
 
-    const totalAmount = Number(order.total);
+    // 金額
+    const jpyAmount = Number(order.total);
 
-    if (!Number.isInteger(totalAmount) || totalAmount <= 0) {
+    if (!Number.isInteger(jpyAmount) || jpyAmount <= 0) {
       return response.status(400).json({
         success: false,
-        message: "訂單金額不正確",
+        message: "訂單日幣金額格式錯誤",
       });
     }
 
-    const siteUrl = getEcpaySiteUrl();
+    const exchangeRate = await fetchJpyToTwdRate();
 
+    const twdAmount = convertJpyToTwd(jpyAmount, exchangeRate.rate);
+
+    const siteUrl = getEcpaySiteUrl();
+    //綠界付款參數
     const paymentParameters = {
       MerchantTradeNo: generateMerchantTradeNo(),
       MerchantTradeDate: formatTaipeiDate(),
-      TotalAmount: String(totalAmount),
+      TotalAmount: String(twdAmount),
       TradeDesc: "Snow Travel 測試訂單",
       ItemName: "Snow Travel 雪地旅遊行程",
-      ReturnURL: `${siteUrl}/api/ecpay/callback`,   //是綠界通知後端付款結果的位置
-      OrderResultURL: `${siteUrl}/api/ecpay/result`,    //是付款後將瀏覽器帶回網站的位置
+      ReturnURL: `${siteUrl}/api/ecpay/callback`, //是綠界通知後端付款結果的位置
+      OrderResultURL: `${siteUrl}/api/ecpay/result`, //是付款後將瀏覽器帶回網站的位置
       ClientBackURL: `${siteUrl}/#/checkout-success/${orderId}`,
-      CustomField1: orderId,    //保存六角訂單 ID
+      CustomField1: orderId,  //訂單 ID
+      CustomField2: String(jpyAmount),  //原始日幣金額
+      CustomField3: String(exchangeRate.rate),  //本次使用的匯率
+      CustomField4: String(twdAmount),  //實際台幣刷卡金額
     };
 
     const client = createEcpayClient();
 
     const paymentForm =
-      client.payment_client.aio_check_out_credit_onetime(
-        paymentParameters,
-      );
+      client.payment_client.aio_check_out_credit_onetime(paymentParameters);
 
     response.setHeader("Content-Type", "text/html; charset=utf-8");
     response.setHeader("Cache-Control", "no-store");
 
-    return response
-      .status(200)
-      .send(renderPaymentPage(paymentForm));
+    return response.status(200).send(renderPaymentPage(paymentForm));
   } catch (error) {
     console.error(
       "建立綠界付款失敗：",

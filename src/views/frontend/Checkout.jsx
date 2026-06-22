@@ -1,5 +1,5 @@
 import axios from "axios";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useDispatch, useSelector } from "react-redux";
 import { Link } from "react-router";
@@ -479,6 +479,77 @@ function Checkout() {
     }
   };
 
+  //新增匯率狀態
+  const [exchangeRate, setExchangeRate] = useState(null);
+  const [rateLoading, setRateLoading] = useState(true);
+  const [rateError, setRateError] = useState("");
+  //加入取得匯率的程式
+  useEffect(() => {
+    let cancelled = false;
+
+    const getExchangeRate = async () => {
+      try {
+        const response = await axios.get("/api/exchange-rate");
+
+        if (
+          !response.data.success ||
+          !Number.isFinite(response.data.rate) ||
+          response.data.rate <= 0
+        ) {
+          throw new Error("匯率資料格式錯誤");
+        }
+
+        if (!cancelled) {
+          setExchangeRate(response.data);
+          setRateError("");
+        }
+      } catch (error) {
+        console.error(
+          "取得日圓匯率失敗：",
+          error.response?.data || error.message,
+        );
+
+        if (!cancelled) {
+          setExchangeRate(null);
+          setRateError(
+            error.response?.data?.message ||
+              "目前無法取得日圓匯率，請稍後重新整理",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setRateLoading(false);
+        }
+      }
+    };
+
+    getExchangeRate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 顯示預估台幣金額
+  const estimatedTwdAmount = exchangeRate
+    ? Math.round(Number(total) * exchangeRate.rate)
+    : null;
+
+  const formattedTwdAmount =
+    estimatedTwdAmount === null
+      ? ""
+      : estimatedTwdAmount.toLocaleString("zh-TW", {
+          style: "currency",
+          currency: "TWD",
+          maximumFractionDigits: 0,
+        });
+
+  const formattedRateTime = exchangeRate?.fetchedAt
+    ? new Date(exchangeRate.fetchedAt).toLocaleString("zh-TW", {
+        timeZone: "Asia/Taipei",
+      })
+    : "";
+
   return (
     <div className="bg-light pt-5 pb-7 text-start">
       <div className="container">
@@ -659,10 +730,14 @@ function Checkout() {
                 <button
                   type="submit"
                   className="btn btn-dark py-3 px-7 rounded-0"
-                  // 6
-                  disabled={isSubmitting}
+                  // 6 匯率失敗時禁止付款
+                  disabled={isSubmitting || rateLoading || Boolean(rateError)}
                 >
-                  {isSubmitting ? "前往付款中..." : "前往綠界付款"}
+                  {isSubmitting
+                    ? "前往付款中..."
+                    : rateLoading
+                      ? "取得匯率中..."
+                      : "前往綠界付款"}
                 </button>
               </div>
             </div>
@@ -715,6 +790,37 @@ function Checkout() {
                   <p className="mb-0 h4 fw-bold">總計</p>
                   <p className="mb-0 h4 fw-bold">{currency(total)}</p>
                 </div>
+                {rateLoading && (
+                  <p className="text-muted mt-3 mb-0">正在取得臺銀匯率……</p>
+                )}
+
+                {rateError && (
+                  <div className="alert alert-warning mt-3 mb-0" role="alert">
+                    {rateError}
+                  </div>
+                )}
+
+                {exchangeRate && estimatedTwdAmount !== null && (
+                  <div className="border-top mt-3 pt-3">
+                    <div className="d-flex justify-content-between">
+                      <span>預估刷卡金額</span>
+                      <strong>{formattedTwdAmount}</strong>
+                    </div>
+
+                    <p className="small text-muted mt-2 mb-0">
+                      臺銀日圓即期賣出：¥1 = NT$
+                      {exchangeRate.rate.toFixed(4)}
+                    </p>
+
+                    <p className="small text-muted mb-0">
+                      匯率取得時間：{formattedRateTime}
+                    </p>
+
+                    <p className="small text-muted mb-0">
+                      實際金額以進入綠界時的匯率為準
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
