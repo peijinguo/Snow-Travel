@@ -1,7 +1,8 @@
 import axios from "axios";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { useDispatch, useSelector } from "react-redux";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 import { currency } from "../../utils/filter";
 import { clearCart } from "../../slice/cartSlice";
 
@@ -11,8 +12,12 @@ const API_PATH = import.meta.env.VITE_API_PATH;
 function Checkout() {
   const carts = useSelector((state) => state.cart.carts);
   const { total } = useSelector((state) => state.cart);
-  const navigate = useNavigate();
+
   const dispatch = useDispatch();
+  //1
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+
   const taiwanDistricts = {
     台北市: [
       "中正區",
@@ -416,13 +421,35 @@ function Checkout() {
     formState: { errors },
   } = useForm({
     mode: "onChange",
+    // 2
+    defaultValues: {
+      payment: "信用卡一次付清",
+    },
   });
 
   const selectedCity = watch("city");
   const selectedPayment = watch("payment");
 
+  //3 加入付款表單函式, 這會建立一個隱藏表單，把訂單 ID 送到 Vercel 後端
+  const redirectToEcpay = (orderId) => {
+    const paymentForm = document.createElement("form");
+    paymentForm.method = "POST";
+    paymentForm.action = "/api/ecpay/checkout";
+
+    const orderInput = document.createElement("input");
+    orderInput.type = "hidden";
+    orderInput.name = "orderId";
+    orderInput.value = orderId;
+
+    paymentForm.appendChild(orderInput);
+    document.body.appendChild(paymentForm);
+    paymentForm.submit();
+  };
+
   const onSubmit = async (formData) => {
-    console.log(formData);
+    //4
+    setIsSubmitting(true);
+    setSubmitError("");
     try {
       const data = {
         user: formData,
@@ -431,14 +458,24 @@ function Checkout() {
       const response = await axios.post(`${API_BASE}/api/${API_PATH}/order`, {
         data,
       });
-      if (response.data.success) {
-        await dispatch(clearCart());
-
-        const { orderId } = response.data;
-        navigate(`/checkout-success/${orderId}`);
+      // if (response.data.success) {
+      //   await dispatch(clearCart());
+      if (!response.data.success) {
+        throw new Error(response.data.message || "建立訂單失敗");
       }
+
+      const { orderId } = response.data;
+      dispatch(clearCart());
+      redirectToEcpay(orderId);
     } catch (error) {
-      console.log("訂單送出失敗", error.response?.data || error.message);
+      console.error("訂單送出失敗：", error.response?.data || error.message);
+      setSubmitError(
+        error.response?.data?.message ||
+          error.message ||
+          "訂單送出失敗，請稍後再試",
+      );
+
+      setIsSubmitting(false);
     }
   };
 
@@ -585,25 +622,36 @@ function Checkout() {
                   {...register("address", { required: "地址必填" })}
                 />
                 <p className="mt-4 mb-2">付款方式</p>
-                {["WebATM", "LinePay", "ApplePay"].map((method) => (
-                  <div className="form-check mb-2" key={method}>
-                    <input
-                      className="form-check-input"
-                      type="radio"
-                      name="gridRadios"
-                      id={method}
-                      value={method}
-                      {...register("payment", { required: "請選擇付款方式" })}
-                    />
-                    <label
-                      className="form-check-label text-muted"
-                      htmlFor={method}
-                    >
-                      {method}
-                    </label>
+
+                {/* 4 */}
+                <div className="form-check mb-2">
+                  <input
+                    className="form-check-input"
+                    type="radio"
+                    id="Credit"
+                    value="信用卡一次付清"
+                    {...register("payment", {
+                      required: "請選擇付款方式",
+                    })}
+                  />
+                  <label
+                    className="form-check-label text-muted"
+                    htmlFor="Credit"
+                  >
+                    信用卡一次付清（綠界測試）
+                  </label>
+                  <div className="form-text">
+                    此為測試環境，不會產生實際扣款。
                   </div>
-                ))}
+                </div>
               </div>
+              {/* 5 */}
+              {submitError && (
+                <div className="alert alert-danger mt-3" role="alert">
+                  {submitError}
+                </div>
+              )}
+
               <div className="d-flex flex-column-reverse flex-md-row mt-4 justify-content-between align-items-md-center align-items-end w-100 checkout-action-row">
                 <Link to="/cart" className="text-dark mt-md-0 mt-3">
                   <i className="fas fa-chevron-left me-2"></i> 返回購物車
@@ -611,8 +659,10 @@ function Checkout() {
                 <button
                   type="submit"
                   className="btn btn-dark py-3 px-7 rounded-0"
+                  // 6
+                  disabled={isSubmitting}
                 >
-                  送出訂單
+                  {isSubmitting ? "前往付款中..." : "前往綠界付款"}
                 </button>
               </div>
             </div>
