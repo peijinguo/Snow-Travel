@@ -178,7 +178,7 @@ const AdminProductModal = forwardRef(({
                         name="fileUpload"
                         id="fileUpload"
                         accept=".jpg, .png, .jpeg"
-                        onChange={(e) => uploadImage}
+                        onChange={uploadImage}
                       />
                     </div>
                     <div className="mb-3">
